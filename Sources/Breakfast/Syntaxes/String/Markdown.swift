@@ -49,14 +49,14 @@ public struct MarkdownSyntax: SyntaxProtocol {
  ) throws -> String {
   let tokens = try renderTokens(from: input, with: self)
   return tokens.compactMap {
-   let component = ($0.component as! MarkdownComponent)
+   guard let component = $0.component as? MarkdownComponent else { return nil }
    let fragment = component.fragment(from: $0.string.htmlSafe)
    if component.isHeader {
     return fragment
    } else {
     return fragment.appending("<br>")
    }
-  }.joined()
+  }.joined(separator: .newline)
  }
 }
 
@@ -367,9 +367,6 @@ struct MarkdownEmailSyntax: SyntaxProtocol {
 
   let first = parts[cursor]
 
-  if first == "<" {
-   debugPrint(first)
-  }
   guard
    first == "<",
    let addressBreak = parts[cursor...].break(from: "<", to: ">"),
