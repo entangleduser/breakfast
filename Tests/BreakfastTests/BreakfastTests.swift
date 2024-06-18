@@ -5,7 +5,11 @@ import XCTest
 final class BreakfastTests: XCTestCase {
  func testSwift() async throws {
   throw XCTSkip(
-   "Partial implementation broken due to changes to 'RepeatSyuntax'"
+   """
+   Partial implementation broken due to changes to 'RepeatSyntax'
+   Please run /Scripts/testSyntax.swift with:
+   https://github.com/acrlc/swift-shell to test, if needed.
+   """
   )
   let input =
    #"""
