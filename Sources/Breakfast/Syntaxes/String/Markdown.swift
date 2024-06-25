@@ -1,23 +1,22 @@
-import Components
+import struct Components.Regex
 import struct Foundation.URL
 
 /// A trivial syntax implementation for markdown, which is intended to be
 /// extended into more flexible rendering solutions.
-public struct MarkdownSyntax: SyntaxProtocol {
+public struct MarkdownSyntax: StringSyntax {
  public typealias Base = String
- public typealias Components = [AnySyntax<String>]
- public var components: Components {
+ public var components: Self.Components {
   Repeat {
    Header()
    Link()
    Email()
    Body()
-   Remaining(component: .unknown)
+   Remaining()
   }
-  Remaining(component: .unknown)
+  Remaining()
  }
 
- var lexer: BaseParser<String>.Lexer = .withTrivia([.newline, .space]) {
+ var lexer: SyntaxParser<String>.Lexer = .withTrivia([.newline, .space]) {
   $0.isWhitespace || ["[", "]", "(", ")", "<", ">"].contains($0)
  }
 
@@ -26,30 +25,23 @@ public struct MarkdownSyntax: SyntaxProtocol {
  /// The statically rendered markdown components
  public static func renderTokens(
   from input: String, with self: Self = .minimal
- ) throws -> [Token] {
-  var tokens: [Token] = .empty
-  var parts: [Substring] = self.lexer(input)
-  var index: Int = .zero
+ ) -> [Token] {
+  var parser = BaseParser(input, with: self.lexer)
   do {
-   try self.apply(
-    &tokens,
-    with: &parts,
-    at: &index,
-    trivial: self.lexer.trivial
-   )
+   try self.parse(with: &parser).throwing()
   } catch {
    print(error)
   }
-
-  return tokens
+  return parser.tokens
  }
 
  public static func renderHTML(
   from input: String, with self: Self = .minimal
  ) throws -> String {
-  let tokens = try renderTokens(from: input, with: self)
+  let tokens = renderTokens(from: input, with: self)
   return tokens.compactMap {
-   guard let component = $0.component as? MarkdownComponent else { return nil }
+   guard let component = $0.component as? MarkdownComponent else { return nil
+   }
    let fragment = component.fragment(from: $0.string.htmlSafe)
    if component.isHeader {
     return fragment
@@ -60,30 +52,7 @@ public struct MarkdownSyntax: SyntaxProtocol {
  }
 }
 
-public struct OffsetSyntax<Base: Collection>: SyntaxProtocol
- where Base.SubSequence: Equatable {
- var amount: Int = 1
-
- init(_ amount: Int = 1) {
-  self.amount = amount
- }
-
- public func apply(
-  _ tokens: inout [ComponentData<Base>],
-  with parts: inout [Base.SubSequence],
-  at cursor: inout Int,
-  trivial: [Base.SubSequence]
- ) throws -> Bool {
-  cursor += amount
-  return true
- }
-}
-
-extension SyntaxProtocol {
- typealias Offset = OffsetSyntax<Base>
-}
-
-// MARK: Canonical Syntax
+// MARK: - Components
 public enum MarkdownComponent: Identifiable, Component {
  case header(Int), codeBlock(String?), body, link(String?, URL?), email(String)
  public var id: String {
@@ -146,46 +115,49 @@ public extension Component where Self == MarkdownComponent {
  static var markdown: Self.Type { Self.self }
 }
 
+// MARK: - Canonical Syntax
 struct MarkdownBodySyntax: SyntaxProtocol {
  typealias Base = String
  typealias Components = [AnySyntax<String>]
 
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  while ["\n", " "].contains(parts[cursor]) {
-   cursor += 1
+ public func parse(with parser: inout BaseParser)throws -> Bool {
+  while ["\n", " "].contains(parser.parts[parser.cursor]) {
+   parser.cursor += 1
   }
 
-  guard cursor < parts.endIndex else { return false }
-  guard !["#", "```"].contains(where: { parts[cursor].hasPrefix($0) }) else {
+  let oldIndex = parser.cursor
+  guard oldIndex < parser.parts.endIndex else { return false }
+  guard
+   !["#", "```"].contains(where: { parser.parts[oldIndex].hasPrefix($0) })
+  else {
    return true
   }
-  let oldIndex = cursor
 
   while
-   cursor < parts.endIndex {
+   parser.cursor < parser.parts.endIndex {
    if
-    let index = parts[cursor...].firstIndex(
+    let index = parser.parts[parser.cursor...].firstIndex(
      where: { $0 == "\n" }
     ) {
     // body needs to stop at the next newline to support newline delimited links
     // and emails as well
-    guard !["#", "```", "\n"].contains(where: { parts[cursor].hasPrefix($0) })
+    guard
+     !["#", "```", "\n"]
+      .contains(where: { parser.parts[parser.cursor].hasPrefix($0) })
     else {
      break
     }
-    cursor = index + 1
+    parser.cursor = index + 1
    } else {
-    cursor = parts.endIndex
+    parser.cursor = parser.parts.endIndex
    }
   }
 
-  tokens.append(
-   .component(MarkdownComponent.body, with: .slice(parts[oldIndex ..< cursor]))
+  parser.tokens.append(
+   .component(
+    MarkdownComponent.body,
+    with: .slice(parser.parts[oldIndex ..< parser.cursor])
+   )
   )
   return true
  }
@@ -198,17 +170,13 @@ extension MarkdownSyntax {
 struct MarkdownHeaderSyntax: SyntaxProtocol {
  typealias Base = String
  typealias Components = [AnySyntax<String>]
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  while ["\n", " "].contains(parts[cursor]) {
-   cursor += 1
+ public func parse(with parser: inout SyntaxParser<Base>)throws -> Bool {
+  while ["\n", " "].contains(parser.parts[parser.cursor]) {
+   parser.cursor += 1
   }
 
-  let first = parts[cursor]
+  let startIndex = parser.cursor
+  let first = parser.parts[startIndex]
   guard first.hasPrefix("#") else {
    return false
   }
@@ -216,25 +184,23 @@ struct MarkdownHeaderSyntax: SyntaxProtocol {
   let index = first.firstIndex(where: { $0 != "#" }) ?? first.endIndex
   let depth = first[..<index].count
   let captureIndex =
-   parts[cursor...].firstIndex(where: { $0 == "\n" }) ?? parts.endIndex
+   parser.parts[startIndex...].firstIndex(where: { $0 == "\n" }) ??
+   parser.parts.endIndex
 
-  let content = parts[cursor ..< captureIndex]
+  let content = parser.parts[startIndex ..< captureIndex]
 
   switch depth {
   case 7...: break
   default:
-   tokens.append(
+   parser.tokens.append(
     .component(
      MarkdownComponent.header(depth), with:
-     .slice(
-      content.dropFirst()
-       .drop(while: { $0 == " " })
-     )
+     .slice(content.dropFirst().drop(while: { $0 == " " }))
     )
    )
   }
 
-  cursor += content.count
+  parser.cursor += content.count
 
   return true
  }
@@ -247,43 +213,38 @@ extension MarkdownSyntax {
 struct MarkdownCodeblockSyntax: SyntaxProtocol {
  typealias Base = String
  typealias Components = [AnySyntax<String>]
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  while ["\n", " "].contains(parts[cursor]) {
-   cursor += 1
+ public func parse(with parser: inout SyntaxParser<Base>)throws -> Bool {
+  while ["\n", " "].contains(parser.parts[parser.cursor]) {
+   parser.cursor += 1
   }
 
-  guard cursor < (parts.endIndex - 1) else {
+  let startIndex = parser.cursor
+  guard startIndex < (parser.parts.endIndex - 1) else {
    return false
   }
 
-  let first = parts[cursor]
+  let first = parser.parts[startIndex]
   guard first.hasPrefix("```") else {
    return false
   }
 
-  let oldIndex = cursor
   if
-   let matchIndex = parts[(cursor + 1)...].firstIndex(where: { $0 == "```" }),
-   parts[matchIndex - 1] == "\n" {
-   cursor = matchIndex + 1
+   let matchIndex =
+   parser.parts[(startIndex + 1)...].firstIndex(where: { $0 == "```" }),
+   parser.parts[matchIndex - 1] == "\n" {
+   parser.cursor = matchIndex + 1
 
    let id: String? = if
-    let splitIndex = first
-     .firstIndex(where: { $0 != "`" }) {
+    let splitIndex = first.firstIndex(where: { $0 != "`" }) {
     String(first[splitIndex...])
    } else {
     nil
    }
 
-   tokens.append(
+   parser.tokens.append(
     .component(
      MarkdownComponent.codeBlock(id),
-     with: .slice(parts[(oldIndex + 2) ..< (cursor - 2)])
+     with: .slice(parser.parts[(startIndex + 2) ..< (parser.cursor - 2)])
     )
    )
   } else {
@@ -300,29 +261,26 @@ extension MarkdownSyntax {
 struct MarkdownLinkSyntax: SyntaxProtocol {
  typealias Base = String
  typealias Components = [AnySyntax<String>]
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  while ["\n", " "].contains(parts[cursor]) {
-   cursor += 1
+ public func parse(with parser: inout SyntaxParser<Base>)throws -> Bool {
+  while ["\n", " "].contains(parser.parts[parser.cursor]) {
+   parser.cursor += 1
   }
 
-  let first = parts[cursor]
+  let startIndex = parser.cursor
+  let first = parser.parts[startIndex]
   guard
    first == "[",
-   let labelBreak = parts[cursor...].break(from: "[", to: "]"),
+   let labelBreak = parser.parts[startIndex...].break(from: "[", to: "]"),
    !labelBreak.contains("\n"),
-   let linkBreak = parts[labelBreak.endIndex...]
+   let linkBreak = parser.parts[labelBreak.endIndex...]
     .break(from: "(", to: ")"), !linkBreak.contains("\n") else {
    return false
   }
 
   let label: String? = if labelBreak.count > 2 {
-   labelBreak[(labelBreak.startIndex + 1) ..< (labelBreak.endIndex - 1)]
-    .joined()
+    labelBreak[
+     (labelBreak.startIndex + 1) ..< (labelBreak.endIndex - 1)
+    ].joined()
   } else {
    nil
   }
@@ -333,7 +291,7 @@ struct MarkdownLinkSyntax: SyntaxProtocol {
    nil
   }
 
-  tokens.append(
+  parser.tokens.append(
    .component(
     MarkdownComponent.link(
      label, url == nil ? nil : URL(string: url!)
@@ -342,7 +300,7 @@ struct MarkdownLinkSyntax: SyntaxProtocol {
    )
   )
 
-  cursor = linkBreak.endIndex + 1
+  parser.cursor = linkBreak.endIndex + 1
 
   return true
  }
@@ -355,21 +313,17 @@ extension MarkdownSyntax {
 struct MarkdownEmailSyntax: SyntaxProtocol {
  typealias Base = String
  typealias Components = [AnySyntax<String>]
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  while ["\n", " "].contains(parts[cursor]) {
-   cursor += 1
+ public func parse(with parser: inout SyntaxParser<Base>)throws -> Bool {
+  while ["\n", " "].contains(parser.parts[parser.cursor]) {
+   parser.cursor += 1
   }
 
-  let first = parts[cursor]
+  let startIndex = parser.cursor
+  let first = parser.parts[startIndex]
 
   guard
    first == "<",
-   let addressBreak = parts[cursor...].break(from: "<", to: ">"),
+   let addressBreak = parser.parts[startIndex...].break(from: "<", to: ">"),
    !addressBreak.contains("\n") else {
    return false
   }
@@ -385,14 +339,14 @@ struct MarkdownEmailSyntax: SyntaxProtocol {
 
   guard address.contains(regex: \.email) else { return false }
 
-  tokens.append(
+  parser.tokens.append(
    .component(
     MarkdownComponent.email(address),
     with: .slice(addressBreak)
    )
   )
 
-  cursor = addressBreak.endIndex + 1
+  parser.cursor = addressBreak.endIndex + 1
 
   return true
  }

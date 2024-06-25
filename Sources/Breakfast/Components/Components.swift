@@ -3,7 +3,7 @@ import struct Core.EmptyID
 /// The identifiable component of a syntactic language
 public protocol Component: Identifiable, CustomStringConvertible {}
 public extension Component {
- static func ~= (lhs: Self, rhs: some Component) -> Bool {
+ static func ~= (lhs: Self, rhs: some Component)throws -> Bool {
   lhs.description == rhs.description
  }
 }
@@ -14,21 +14,22 @@ public extension Component where ID == EmptyID {
 
 public typealias AnyComponent = any Component
 
-public struct ErasedComponent: Component {
- public let id: AnyHashable
- public let description: String
- public init(_ component: some Component) {
-  id = component.id
-  description = component.description
- }
-}
+//public struct ErasedComponent: Component {
+// public let id: AnyHashable
+// public let description: String
+// public init(_ component: some Component) {
+//  id = component.id
+//  description = component.description
+// }
+//}
 
 public extension Component {
- var erased: ErasedComponent {
-  ErasedComponent(self)
- }
+// @_transparent
+// var erased: ErasedComponent {
+//  ErasedComponent(self)
+// }
 
- static func == (lhs: AnyComponent, rhs: AnyComponent) -> Bool {
+ static func == (lhs: AnyComponent, rhs: AnyComponent)throws -> Bool {
   lhs.description == rhs.description
  }
 

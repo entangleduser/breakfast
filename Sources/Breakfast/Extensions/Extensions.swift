@@ -9,6 +9,8 @@ extension String.SubSequence: SubSequential {
  public typealias PreSequence = String
 }
 
+extension String: ParseableSequence {}
+
 extension ArraySlice: SubSequential {
  public typealias PreSequence = [Element]
 }

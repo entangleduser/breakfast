@@ -1,27 +1,22 @@
-public struct PreprocessorSyntax: SyntaxProtocol {
+public struct PreprocessorSyntax: StringSyntax {
  public init() {}
- @discardableResult
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  guard parts.count > 1 else {
+ public func parse(with parser: inout BaseParser)throws -> Bool {
+  guard parser.cursor < parser.parts.endIndex else {
    return false
   }
-  let prefix = parts[..<2].joined()
+  let prefix = parser.parts[..<2].joined()
 
   if prefix == "#!" {
-   parts.removeFirst(2)
+   parser.cursor += 2
+   // parser.parts.removeFirst(2)
 
    let breakIndex =
-    parts.firstIndex(where: { $0 == .newline }) ?? parts.endIndex
+    parser.parts.firstIndex(where: { $0 == .newline }) ?? parser.parts.endIndex
 
    var splits =
-    parts[..<breakIndex].joined().partition { $0 == .space }
+    parser.parts[..<breakIndex].joined().partition { $0 == .space }
 
-   tokens.append(
+   parser.tokens.append(
     .component(
      .preprocessor.hashbang, with: .sequence(Substring(prefix))
     )
@@ -29,23 +24,24 @@ public struct PreprocessorSyntax: SyntaxProtocol {
 
    let processor = splits.removeFirst()
 
-   tokens.append(
+   parser.tokens.append(
     .component(.preprocessor.processor, with: .sequence(processor))
    )
 
    while splits.notEmpty {
-    removeTrivia(&tokens, for: trivial, with: &splits)
+    removeTrivia(with: &parser)
     if splits.notEmpty {
      let sequence = splits.removeFirst()
-     tokens.append(
+     parser.tokens.append(
       .component(.preprocessor.argument, with: .sequence(sequence))
      )
     }
    }
 
-   removeTrivia(&tokens, for: trivial, with: &splits)
+   removeTrivia(with: &parser)
 
-   parts.removeSubrange(..<breakIndex)
+   parser.cursor = breakIndex
+   //parser.parts.removeSubrange(..<breakIndex)
    return true
   }
   return true
@@ -53,109 +49,94 @@ public struct PreprocessorSyntax: SyntaxProtocol {
 }
 
 /// A rule to apply to declarations based on `keywords`
-public struct DeclarationSyntax: SyntaxProtocol {
+public struct DeclarationSyntax: StringSyntax {
  public let keywords: Set<Substring>
+ public typealias Action = PerformSyntax<Base>.Action
  /// The function performed after adding the identifier component
- public let parse: (
-  inout [Token],
-  inout [Substring],
-  inout Int,
-  [Substring],
-  Substring
- ) throws -> ()
+ public let action: Action
 
- @SyntaxBuilder<Base>
- var contents: (Substring) -> Components
+ @Syntactic
+ var contents: (Substring) -> [AnySyntax<Base>]
 
  public init(
   keywords: Set<Substring>,
-  parse: @escaping (
-   inout [DeclarationSyntax.Token],
-   inout [Substring],
-   inout Int,
-   [Substring],
-   Substring
-  ) throws -> (),
-  @Syntactic contents: @escaping (Substring) -> DeclarationSyntax.Components
+  action: @escaping Action,
+  @Syntactic contents: @escaping (Substring) -> [AnySyntax<Base>]
  ) {
   self.keywords = keywords
-  self.parse = parse
+  self.action = action
   self.contents = contents
  }
 
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  guard let part = parts.first else {
+ public func parse(with parser: inout Parser<Base>)throws -> Bool {
+  guard let part = parser.parts.first else {
    return false
   }
-  
+
   if keywords.contains(part) {
-   parts.removeFirst()
+   parser.parts.removeFirst()
 
    let key: Token = .parameter(
     .word.declaration(.custom(String(part))),
     with: .sequence(part)
    )
-   tokens.append(key)
+   parser.tokens.append(key)
 
-   removeTrivia(&tokens, for: trivial, with: &parts)
+   removeTrivia(with: &parser)
 
-   let identifier = try unwrap(parts.first, "missing identifier for '\(part)'")
+   let identifier = try unwrap(
+    parser.parts.first,
+    "missing identifier for '\(part)'"
+   )
 
-   try assert(
+   try Breakfast.assert(
     identifier.count > 1
      ? !(identifier.hasPrefix("_") || identifier.hasSuffix("_"))
      : true, // apply other rules
     "identifier cannot begin or end with an underscore"
    )
 
-   parts.removeFirst()
+   parser.cursor += 1
+   //parser.parts.removeFirst()
 
    let token: Token = .parameter(.identifier(part), with: .sequence(identifier))
-   tokens.append(token)
+   parser.tokens.append(token)
 
-   try parse(&tokens, &parts, &cursor, trivial, part)
-
-   for rule in contents(part) {
-    removeTrivia(&tokens, for: trivial, with: &parts)
-    try rule.erased.apply(&tokens, with: &parts, at: &cursor, trivial: trivial)
-    removeTrivia(&tokens, for: trivial, with: &parts)
+   if try action(&parser) {
+    for component in contents(part) {
+     removeTrivia(with: &parser)
+     try component.parse(with: &parser)
+     removeTrivia(with: &parser)
+    }
+   } else {
+    // throw?
+    return false
    }
-  } else {
-   // throw?
-   return false
   }
   return true
  }
 }
 
 /// A rule to apply to a string at the current cursor
-public struct StringLiteralSyntax: SyntaxProtocol {
+public struct StringLiteralSyntax: StringSyntax {
  public init() {}
- @discardableResult
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  guard let part = parts.first else {
+ public func parse(with parser: inout BaseParser)throws -> Bool {
+  guard let part = parser.parts.first else {
    return false
   }
   // TODO: create syntax loop that reads the first part
   if part.hasPrefix("\"") {
-//   let sep: (Substring) -> Bool = {
+//   let sep: (Substring)throws -> Bool = {
 //    guard $0.count == 1 else { return false }
 //    let char = $0.first!
 //    return char.isPunctuation || char.isWhitespace || char.isNewline
 //   }
 
    let stringBreak =
-    try unwrap(parts.breakEven(from: "\"", to: "\""), "unterminated string")
+    try unwrap(
+     parser.parts.breakEven(from: "\"", to: "\""),
+     "unterminated string"
+    )
 
    var queue: [Token] = .empty
 
@@ -182,7 +163,7 @@ public struct StringLiteralSyntax: SyntaxProtocol {
 
      let nextCharacter = stringBreak.element(after: index)
      if nextCharacter == "(" {
-      //let escape = nextCharacter.unsafelyUnwrapped.first!
+      // let escape = nextCharacter.unsafelyUnwrapped.first!
       let part = stringBreak[index...]
       // split into simple parts (or recurse)
       let match =
@@ -198,10 +179,10 @@ public struct StringLiteralSyntax: SyntaxProtocol {
       let token: Token = .parameter(.string.interpolated, with: .slice(slice))
       queue.append(token)
 
-      cursor = endIndex
+      parser.cursor = endIndex
      } else {
       if let escape = nextCharacter {
-       try assert(
+       try Breakfast.assert(
         validEscapes.contains(escape),
         "invalid escape sequence ending with\(escape)"
        )
@@ -210,19 +191,20 @@ public struct StringLiteralSyntax: SyntaxProtocol {
       let slice = stringBreak[escapeIndex ..< nextIndex]
       let token: Token = .parameter(.string.escaped, with: .slice(slice))
 
-      parts.removeFirst()
+      parser.cursor += 1
+      //parser.parts.removeFirst()
 
       queue.append(token)
-      cursor = stringBreak.index(after: nextIndex)
+      parser.cursor = stringBreak.index(after: nextIndex)
      }
     }
 
     try escape(at: escapeIndex)
 
     while
-     cursor < stringBreak.endIndex,
-     let escapeIndex = stringBreak[cursor...].firstIndex(of: "\\") {
-     let `static` = stringBreak[cursor ..< escapeIndex]
+     parser.cursor < stringBreak.endIndex,
+     let escapeIndex = stringBreak[parser.cursor...].firstIndex(of: "\\") {
+     let `static` = stringBreak[parser.cursor ..< escapeIndex]
      if `static`.count > 0 {
       let token: Token = .parameter(.string.static, with: .slice(`static`))
       queue.append(token)
@@ -230,22 +212,26 @@ public struct StringLiteralSyntax: SyntaxProtocol {
      try escape(at: escapeIndex)
     }
 
-    if cursor < stringEndIndex {
-     let `static` = stringBreak[cursor...]
+    if parser.cursor < stringEndIndex {
+     let `static` = stringBreak[parser.cursor...]
      let token: Token = .parameter(.string.static, with: .slice(`static`))
      queue.append(token)
-     cursor = stringBreak.endIndex
+     parser.cursor = stringBreak.endIndex
     }
    } else {
     let token: Token = .parameter(.string.literal, with: .slice(stringBreak))
-    tokens.append(token)
-    parts.removeSubrange(parts.startIndex ..< stringBreak.endIndex)
+    parser.tokens.append(token)
+    parser.parts
+     .removeSubrange(parser.parts.startIndex ..< stringBreak.endIndex)
     return true
    }
-   tokens.append(contentsOf: queue)
-   let endCursor = cursor < parts.endIndex ? cursor : parts.endIndex
-   parts.removeSubrange(parts.startIndex ..< endCursor)
-   cursor += 1
+   parser.tokens.append(contentsOf: queue)
+   let endCursor = parser.cursor < parser.parts.endIndex
+   ? parser.cursor
+    : parser.parts.endIndex
+//   parser.parts.removeSubrange(parser.parts.startIndex ..< endCursor)
+   parser.cursor = endCursor + 1
+//   parser.cursor += 1
    return true
   }
   return false

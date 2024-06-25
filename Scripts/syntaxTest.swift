@@ -4,7 +4,7 @@ import Benchmarks // @git/acrlc/benchmarks
 import Command // @git/acrlc/command
 import Tests // @git/acrlc/acrylic
 
-struct ExplicitTypeSyntax: SyntaxProtocol {
+struct ExplicitTypeSyntax: StringSyntax {
  let component: TypeComponent
  let limitWhere: ([Substring]) throws -> Int?
 
@@ -59,9 +59,9 @@ struct ExplicitTypeSyntax: SyntaxProtocol {
  }
 }
 
-public struct AssignmentSyntax: SyntaxProtocol {
+public struct AssignmentSyntax: StringSyntax {
  /// Applies the first rule that returns true
- @SyntaxBuilder<String>
+ @Syntactic
  public var contents: () -> [AnySyntax<String>]
  @discardableResult
  public func apply(
@@ -75,7 +75,8 @@ public struct AssignmentSyntax: SyntaxProtocol {
    return false
   }
   do {
-   parts.removeFirst()
+   parser.cursor += 1
+   //parts.removeFirst()
 
    let token: Token =
     .delimiter(from: .identifier.property, to: .symbol.assignment, with: "=")
@@ -85,7 +86,7 @@ public struct AssignmentSyntax: SyntaxProtocol {
 
    for rule in contents() {
     if
-     try rule.erased.apply(
+     try rule.apply(
       &tokens,
       with: &parts,
       at: &cursor,
@@ -102,14 +103,9 @@ public struct AssignmentSyntax: SyntaxProtocol {
  }
 }
 
-struct WordSyntax: SyntaxProtocol {
+struct WordSyntax: StringSyntax {
  @discardableResult
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
+ public func parse(with parser: inout BaseParser) throws -> Bool {
   guard parts.notEmpty else {
    return false
   }
@@ -235,7 +231,7 @@ struct TestSyntax: StaticTests {
    Measure("Parse SomeSyntax", iterations: 10) {
     let syntax = SomeSyntax()
 
-    var parser = BaseParser<String>(testString, with: .backtickEscapedCode)
+    var parser = SyntaxParser<String>(testString, with: .backtickEscapedCode)
     var parts = parser.parts
     var cursor = parser.cursor
     var tokens: [Token] = .empty
@@ -346,7 +342,7 @@ public extension StringProtocol {
 struct TestNaiveSyntax: Tests, SyntaxProtocol {
  typealias Base = String
  typealias Token = ComponentData<String>
- let sep: (Character) -> Bool = {
+ let sep: (Character)throws -> Bool = {
   ($0.isPunctuation && $0 != "`") || $0.isSymbol || $0.isWhitespace || $0
    .isNewline
  }
@@ -439,7 +435,7 @@ extension TestNaiveSyntax {
    var cursor = base.startIndex
    var sub: ArraySlice<Substring> { base[cursor...] }
 
-   func removeTrivia() -> Bool {
+   func removeTrivia()throws -> Bool {
     if let items = base.removeTrivia(for: trivial) {
      for trivia in items {
       _tokens.append(.trivial(trivia.first!.first!, count: trivia.count))

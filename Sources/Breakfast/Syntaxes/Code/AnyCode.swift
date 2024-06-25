@@ -1,3 +1,2 @@
-struct AnyCode: SyntaxProtocol {
- typealias Base = String
-}
+/// An abstract to concrete syntax for code.
+struct AnyCode<Base: ParseableSequence>: StringSyntax {}

@@ -15,7 +15,7 @@ let package = Package(
   .target(
    name: "Breakfast", dependencies: [
     "Core",
-    "Time",
+     "Time",
     .product(
      name: "Extensions", package: "core"
     ),

@@ -1,111 +1,107 @@
 /// A syntax for swift with some static utilities to render tokens using
 /// `SwiftSyntax`
-public struct SwiftCodeSyntax: SyntaxProtocol {
- public typealias Base = String
- public typealias Components = [AnySyntax<String>]
+public struct SwiftCodeSyntax: StringSyntax {
  public init() {}
-
- public var components: Components {
-  PreprocessorSyntax()
-  Repeat {
-   declarationSyntax
-  }
-  Remaining()
- }
-
- public var declarationSyntax: DeclarationSyntax {
-  DeclarationSyntax(
-   keywords: [
-    "struct", "class", "actor", "let", "var", "func", "typealias"
-   ],
-   parse: declaration,
-   contents: declarationContent
-  )
- }
-
- @Syntactic
- var propertyDeclaration: Components {
-  ExplicitTypeSyntax(
-   with: .type.property,
-   limitWhere: { $0.firstIndex(of: "=") }
-  )
-  AssignmentSyntax {
-   StringLiteralSyntax()
-   WordSyntax()
-  }
- }
-
- @Syntactic
- var variableDeclaration: Components {
-  ExplicitTypeSyntax(
-   with: .type.property,
-   limitWhere: { $0.firstIndex(of: "=") }
-  )
-  AssignmentSyntax {
-   StringLiteralSyntax()
-   WordSyntax()
-  }
-  Break(
-   from: "{", to: "}", header: { limit in
-    ExplicitTypeSyntax(with: .type.property, limit: limit)
-   }, content: { _ in
-    StringLiteralSyntax()
-   }
-  )
- }
-
- @Syntactic
- var typeContent: Components {
-  StringLiteralSyntax()
- }
-
- @Syntactic
- func typeDeclaration(_ keyword: Substring) -> Components {
-  Break(
-   from: "{", to: "}", header: { limit in
-    ExplicitTypeSyntax(with: .type(keyword), limit: limit)
-    // ?? Assert(\.cursor, { $0 < limit })
-   }, content: { _ in
-    typeContent
-   }
-  )
- }
-
- @Syntactic
- func declarationContent(_ keyword: Substring) -> Components {
-  switch keyword {
-  case "struct", "class":
-   typeDeclaration(keyword)
-  case "let":
-   propertyDeclaration
-  case "var":
-   propertyDeclaration
-  default:
-   declarationSyntax
-  }
- }
-
- func declaration(
-  _ tokens: inout [Token],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring],
-  keyword: Token.SubSequence
- ) {
-  // TODO: actually parse
-  switch keyword {
-  case "var": break
-  case "struct": break
-  default: break
-  }
- }
+// public var components: Components {
+//  PreprocessorSyntax()
+//  Repeat {
+//   declarationSyntax
+//  }
+//  Remaining()
+// }
+//
+// public var declarationSyntax: DeclarationSyntax {
+//  DeclarationSyntax(
+//   keywords: [
+//    "struct", "class", "actor", "let", "var", "func", "typealias"
+//   ],
+//   parse: declaration,
+//   contents: declarationContent
+//  )
+// }
+//
+// @Syntactic
+// var propertyDeclaration: Components {
+//  ExplicitTypeSyntax(
+//   with: .type.property,
+//   limitWhere: { $0.firstIndex(of: "=") }
+//  )
+//  AssignmentSyntax {
+//   StringLiteralSyntax()
+//   WordSyntax()
+//  }
+// }
+//
+// @Syntactic
+// var variableDeclaration: Components {
+//  ExplicitTypeSyntax(
+//   with: .type.property,
+//   limitWhere: { $0.firstIndex(of: "=") }
+//  )
+//  AssignmentSyntax {
+//   StringLiteralSyntax()
+//   WordSyntax()
+//  }
+//  Break(
+//   from: "{", to: "}", header: { limit in
+//    ExplicitTypeSyntax(with: .type.property, limit: limit)
+//   }, content: { _ in
+//    StringLiteralSyntax()
+//   }
+//  )
+// }
+//
+// @Syntactic
+// var typeContent: Components {
+//  StringLiteralSyntax()
+// }
+//
+// @Syntactic
+// func typeDeclaration(_ keyword: Substring) -> Components {
+//  Break(
+//   from: "{", to: "}", header: { limit in
+//    ExplicitTypeSyntax(with: .type(keyword), limit: limit)
+//    // ?? Assert(\.cursor, { $0 < limit })
+//   }, content: { _ in
+//    typeContent
+//   }
+//  )
+// }
+//
+// @Syntactic
+// func declarationContent(_ keyword: Substring) -> Components {
+//  switch keyword {
+//  case "struct", "class":
+//   typeDeclaration(keyword)
+//  case "let":
+//   propertyDeclaration
+//  case "var":
+//   propertyDeclaration
+//  default:
+//   declarationSyntax
+//  }
+// }
+//
+// func declaration(
+//  _ tokens: inout [Token],
+//  with parts: inout [Substring],
+//  at cursor: inout Int,
+//  trivial: [Substring],
+//  keyword: Token.SubSequence
+// ) {
+//  // TODO: actually parse
+//  switch keyword {
+//  case "var": break
+//  case "struct": break
+//  default: break
+//  }
+// }
 }
 
 // MARK: Components
-
-struct ExplicitTypeSyntax: SyntaxProtocol {
+struct ExplicitTypeSyntax: StringSyntax {
  let component: TypeComponent
- let limitWhere: ([Substring]) throws -> Int?
+ let limitWhere: (Fragments) throws -> Int?
 
  init(with component: TypeComponent, limit: Int? = nil) {
   self.component = component
@@ -114,83 +110,67 @@ struct ExplicitTypeSyntax: SyntaxProtocol {
 
  init(
   with component: TypeComponent,
-  limitWhere condition: @escaping ([Substring]) throws -> Int?
+  limitWhere condition: @escaping (Fragments) throws -> Int?
  ) {
   self.component = component
   limitWhere = condition
  }
 
- @discardableResult
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  guard parts.first == ":" else {
-   return true
-  }
+ public func parse(with parser: inout SyntaxParser<Base>)throws -> Bool {
+  guard parser.parts.first == ":" else { return true }
 
   // let limit = try limitWhere(parts) ?? parts.endIndex
 
   let token: Token =
    .delimiter(from: .identifier(component.id), to: component, with: ":")
-  tokens.append(token)
-  parts.removeFirst()
+  parser.tokens.append(token)
+  parser.cursor += 1
+  //parser.parts.removeFirst()
 
-  removeTrivia(&tokens, for: trivial, with: &parts)
+  removeTrivia(with: &parser)
 
   // try assert(cursor < limit, "expected type")
 
-  let type = try unwrap(parts.first, "missing type'")
+  let type = try unwrap(parser.parts.first, "missing type'")
 
-  try assert(
+  try Breakfast.assert(
    type.allSatisfy { $0.isAlphaNumeric || $0 == "_" },
    "invalid type \(type)"
   )
 
-  parts.removeFirst()
+  parser.cursor += 1
+  //parser.parts.removeFirst()
 
   let typeToken: Token = .parameter(component, with: .sequence(type))
-  tokens.append(typeToken)
+  parser.tokens.append(typeToken)
 
   return true
  }
 }
 
-public struct AssignmentSyntax: SyntaxProtocol {
+public struct AssignmentSyntax: StringSyntax {
  /// Applies the first rule that returns true
- @SyntaxBuilder<Base>
- public var contents: () -> [AnySyntax<Base>]
- @discardableResult
- public func apply(
-  _ tokens: inout [ComponentData<String>],
-  with parts: inout [Substring],
-  at cursor: inout Int,
-  trivial: [Substring]
- ) throws -> Bool {
-  let part = try unwrap(parts.first, "expected expression")
+ @Syntactic
+ public var contents: () -> Components
+ public func parse(with parser: inout SyntaxParser<Base>)throws -> Bool {
+  let part = try unwrap(parser.parts.first, "expected expression")
   guard part == "=" else {
    return false
   }
   do {
-   parts.removeFirst()
+   parser.cursor += 1
+   //parser.parts.removeFirst()
 
    let token: Token =
     .delimiter(from: .identifier.property, to: .symbol.assignment, with: "=")
-   tokens.append(token)
+   parser.tokens.append(token)
 
-   removeTrivia(&tokens, for: trivial, with: &parts)
+   removeTrivia(with: &parser)
 
-   for rule in contents() {
+   for component in contents() {
     if
-     try rule.erased.apply(
-      &tokens,
-      with: &parts,
-      at: &cursor,
-      trivial: trivial
-     ) {
-     removeTrivia(&tokens, for: trivial, with: &parts)
+     try component.parse(with: &parser) {
+     removeTrivia(with: &parser)
      return true
     }
    }
@@ -233,9 +213,9 @@ extension SwiftCodeSyntax {
   var previous: TokenSyntax?
 
   func range(_ token: TokenSyntax) -> Range<String.Index> {
-   let range = token.trimmedByteRange
-   let position = range.offset
-   let offset = range.endOffset
+   let range = token.trimmedRange
+   let position = range.lowerBound.utf8Offset
+   let offset = range.upperBound.utf8Offset
    return String.Index(utf16Offset: position, in: input) ..<
     String.Index(utf16Offset: offset, in: input)
   }
@@ -250,8 +230,8 @@ extension SwiftCodeSyntax {
    let isTrailing = position == .trailing
    let sourcePosition = (
     isTrailing
-     ? token.trimmedByteRange.endOffset
-     : token.totalByteRange.offset
+     ? token.trimmedRange.upperBound.utf8Offset
+     : token.range.lowerBound.utf8Offset
    ) +
     byteOffset
 
